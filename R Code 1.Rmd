@@ -1,0 +1,199 @@
+---
+title: "Practicum"
+author: "Michael Campbell"
+date: "April 15, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(MASS)
+library(plyr)
+library(dplyr)
+library(knitr)
+library(lubridate)
+library(plm)
+library(broom)
+library(lfe)
+library(sandwich)
+library(tidyr)
+library(data.table)
+library(MatchIt)
+library(ggplot2)
+
+
+### Setwd
+setwd("Y:/Illume")
+
+### Import Data
+August_treat <- fread("aug_16_event_TREATMENT_negFixed.csv", data.table = FALSE)
+July_treat <- fread("july_13_event_TREATMENT_negFixed.csv", data.table = FALSE)
+August_control <- fread("aug_16_event_CONTROL_negFixed.csv", data.table = FALSE)
+July_control <- fread("july_13_event_CONTROL_negFixed.csv", data.table = FALSE)
+Customer_Data <- fread("Customer Data.csv", data.table = FALSE)
+
+```
+
+The number of unique observations in August treatment is ` r length(unique(August_treat$custID))`. (4519)
+The number of unique observations in Augst control is ` r length(unique(August_control$custID))`. (4448)
+The number of unique observations in July treatment is ` r length(unique(July_treatment$custID))`. (4519)
+The number of unique observations in July control is ` r length(unique(July_control$custID))`. (4448)
+```{r}
+Treat_Merge <- rbind(August_treat, July_treat)
+Control_Merge <- rbind(August_control, July_control)
+
+
+
+### Combining Modified datasets
+
+Master_dataset <- rbind(Control_Merge, Treat_Merge)
+
+# matching custID types
+Master_dataset$custID <- as.numeric(Master_dataset$custID)
+
+Master_dataset <- left_join(Master_dataset, Customer_Data, by=c("custID"))
+
+### Drop Redundant Columns
+
+#Master_dataset <- subset(Master_dataset, select = -c(V1.x, X, V1.y))
+```
+
+
+```{r}
+### Create working dataset
+
+data <- Master_dataset
+
+### Convert timestamp to usable format and adjust time to hour end by subtracting 3600 seconds. 00:00:00 becomes
+### 23:00:00
+
+data$timestamp <- strptime(data$timestamp, format = "%d%b%Y:%H:%M:%S") - rep(3600, length(data$timestamp))
+data$minute <- minute(data$timestamp)
+data$hour <- hour(data$timestamp)
+data$day <- day(data$timestamp)
+data$month <- month(data$timestamp)
+
+### Showing occurrence of non-hourly readings
+hist(subset(data, minute!=0)$minute,
+xlab = "Minute of Occurence",
+main = "Occurrence of Non-Hourly Readings")
+axis(1, at = seq(0, 60, by = 5))
+hist(subset(data, minute!=0)$minute, breaks = unique(data$minute),
+     xlab = "Minute of Occurence",
+     main = "Occurence of Non-Hourly Readings")
+axis(1, at = seq(0, 60, by = 5))
+
+## Sort by id and then by time
+sortvect <- order(data[, "custID"], data[,"timestamp"])
+data <- data[sortvect,]
+
+### drop the non-hourly observations readings. before: 2,247,397. Unique custID: 8,969.
+data <- subset(data, minute == 0)
+### After 2,230,575. Unique custID: 8,969. Total dropped: 16,822
+
+## Create UsageVariable
+data <- data %>% 
+      group_by(custID, month) %>% 
+      mutate(usage = read_value - lag(read_value, default=first(read_value))) %>%
+      ungroup()
+
+
+
+### Subset months to drop 1st hour zero usage period
+# 1,115,569 observations before drop
+aug_sub <- subset(data, month == 8)
+aug_sub <- aug_sub[duplicated(aug_sub$custID),]
+# 1,106,602 observations after drop.
+aug_sub <- aug_sub %>% 
+    group_by(custID, day) %>%
+    filter(length(hour) <= 24 & day != 12) %>%
+    ungroup()
+# 953,743 observations after drop with 8,653 unique custIDs.
+
+july_sub <- subset(data, month == 7)
+# 1,115,006 observations
+july_sub <- july_sub[duplicated(july_sub$custID),]
+
+# 1,106,041 observations after drop and 8,965 unique IDs.
+july_sub <- july_sub %>% 
+    group_by(custID, day) %>%
+    filter(length(hour) <= 24 & day != 9) %>%
+    ungroup()
+# 952,079 observations after drop and 8,647 unique IDs.
+
+## Recombine into working dataset
+
+data <- rbind(july_sub, aug_sub) #total of 1,905,822 observations and 8,671 unique IDs.
+
+
+### Data Exploration and Analysis
+
+## na count after dropping first consumption period
+# before dropping nas: 1,905,822 and 8,671 unique IDs.
+na_count <-sapply(data, function(y) sum(length(which(is.na(y)))))
+print(na_count)
+data <- na.omit(data, "usage")
+# After dropping: 1,901,349 observations and 8,613 unique IDs.
+# Keeping custIDs with negative readings, but dropping those observations.
+
+negative <- subset(data, usage < 0) #1,085 observations across 379 observations
+positive <- subset(data, usage >= 0) #1,900,264 observations
+
+    
+  
+```
+
+Graph for consumption.
+```{r}
+
+  
+
+aug_event <- subset(positive, day == "16" & month == "8")
+july_event <- subset(positive, day == "13" & month == "7")
+
+
+## create usage graph data
+
+summary <- spread(aggregate(usage ~ Treatment + hour, aug_event, FUN = "mean"), Treatment, usage)
+colnames(summary) <- c("Hours", "Control", "Treatment")
+
+ggplot(summary, mapping = aes(Hours, y = Consumption, color = Variables)) + 
+  geom_line(aes(y = Control, col = "Control")) + 
+  geom_line(aes(y = Treatment, col = "Treatment"))
+
+```
+
+
+```{r}
+## Climate Zones
+clim.obs <- ddply(data, ~Climate, summarise, distinct_czones=length(unique(custID)))
+
+## Rural vs Urban
+metro.obs <- ddply(data, ~Metro, summarise, distinct_metro=length(unique(custID)))
+
+## Tenant Status
+
+tenant.obs <- ddply(data, ~NewTenant, summarise, distinct_tenant=length(unique(custID)))
+
+## Zipcode distribution
+
+zip.obs <- ddply(data, ~Zip, summarise, distinct_zip=length(unique(custID)))
+zip.obs <- zip.obs[order(zip.obs$distinct_zip, decreasing =TRUE),]
+
+## consumption graph
+
+aug_event <- subset(data, day == "16" & month == "8")
+july_event <- subset(data, day == "13" & month == "7")
+
+## drop NA for graph
+aug_event <- na.omit(aug_event, "usage")
+july_event <- na.omit(july_event, "usage")
+
+## create usage graph data
+
+#summary <- spread(aggregate(usage ~ Treatment + hour, aug_event, FUN = "mean"), Treatment, usage)
+#colnames(summary) <- c("Hours", "Control", "Treatment")
+#ggplot(summary, mapping = aes(Hours, y = Consumption, color = Variables)) + 
+  #geom_line(aes(y = Control, col = "Control")) + 
+  #geom_line(aes(y = Treatment, col = "Treatment"))
+``` 
