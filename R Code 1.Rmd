@@ -1,7 +1,7 @@
 ---
-title: "Practicum"
+
 author: "Michael Campbell"
-date: "April 15, 2018"
+
 output: html_document
 ---
 
@@ -23,7 +23,7 @@ library(ggplot2)
 
 
 ### Setwd
-setwd("Y:/Illume")
+setwd("Y:/<insert path>")
 
 ### Import Data
 August_treat <- fread("aug_16_event_TREATMENT_negFixed.csv", data.table = FALSE)
