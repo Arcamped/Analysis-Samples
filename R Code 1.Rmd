@@ -1,10 +1,8 @@
 ---
-
 author: "Michael Campbell"
-
 output: html_document
 ---
-
+## This is part of the code for my Master's Research Project into the efficacy of an Air Conditioner Cycling program. The data ##used is a combination of high-level demographic data (geographic region type, urban-rural, etc.) and individual data from ##automatic readings of electricity meters. The program data takes the form of a randomized control trial and so is split into ##two groups: treatment and control. The code here is before the actual modelling stage. I have several models built that ##explore the efficacy of the AC cycling, but they have not been added here yet.
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(MASS)
@@ -64,8 +62,7 @@ Master_dataset <- left_join(Master_dataset, Customer_Data, by=c("custID"))
 
 data <- Master_dataset
 
-### Convert timestamp to usable format and adjust time to hour end by subtracting 3600 seconds. 00:00:00 becomes
-### 23:00:00
+### Data comes from electricity meter reads that occur at the end of the hour. It is more convenient for analysis to convert timestampt to denote beginning of hour instead of the end.
 
 data$timestamp <- strptime(data$timestamp, format = "%d%b%Y:%H:%M:%S") - rep(3600, length(data$timestamp))
 data$minute <- minute(data$timestamp)
@@ -73,7 +70,8 @@ data$hour <- hour(data$timestamp)
 data$day <- day(data$timestamp)
 data$month <- month(data$timestamp)
 
-### Showing occurrence of non-hourly readings
+# Roughly 10% of the data had multiple observations per hour. Needed to distinguish between meters that read more than once per # hour and customers with more than one meter (as data has customer ID and NOT meter ID). The analysis shown below revealed  #that the meters with multiple observations per hour occurred in 15 minutes intervals and so could be separated from customers #with multiple meters (for which the data is largely useless).
+
 hist(subset(data, minute!=0)$minute,
 xlab = "Minute of Occurence",
 main = "Occurrence of Non-Hourly Readings")
@@ -83,15 +81,16 @@ hist(subset(data, minute!=0)$minute, breaks = unique(data$minute),
      main = "Occurence of Non-Hourly Readings")
 axis(1, at = seq(0, 60, by = 5))
 
-## Sort by id and then by time
+
 sortvect <- order(data[, "custID"], data[,"timestamp"])
 data <- data[sortvect,]
 
-### drop the non-hourly observations readings. before: 2,247,397. Unique custID: 8,969.
+# Analysis shows that it is safe to drop observations that occur off the hour as meters with multiple readings per hour occur #in 15 minute intervals. The below process drops the non-hourly observations readings, ensuring all usage data is in the format #of usage per hour. 
+### Observations before: 2,247,397. Unique custID: 8,969.
 data <- subset(data, minute == 0)
 ### After 2,230,575. Unique custID: 8,969. Total dropped: 16,822
 
-## Create UsageVariable
+## Calculate electricity consumption during a timer period by comparing meter read values in different time periods.
 data <- data %>% 
       group_by(custID, month) %>% 
       mutate(usage = read_value - lag(read_value, default=first(read_value))) %>%
@@ -99,11 +98,14 @@ data <- data %>%
 
 
 
-### Subset months to drop 1st hour zero usage period
+# Subset months to drop 1st hour zero usage period as the first hour of the data set makes no sense (impossible to determine #meter read value in hour before data starts).
 # 1,115,569 observations before drop
 aug_sub <- subset(data, month == 8)
 aug_sub <- aug_sub[duplicated(aug_sub$custID),]
-# 1,106,602 observations after drop.
+# 1,106,602 observations after drop. 
+
+# Here customers with multiple meters are dropped. != 12 is used because the data on the 12th isn't for the entire day and #hours available varies from customer to customer. Data from the 12th will not be used in later models/analysis.
+
 aug_sub <- aug_sub %>% 
     group_by(custID, day) %>%
     filter(length(hour) <= 24 & day != 12) %>%
@@ -114,7 +116,8 @@ july_sub <- subset(data, month == 7)
 # 1,115,006 observations
 july_sub <- july_sub[duplicated(july_sub$custID),]
 
-# 1,106,041 observations after drop and 8,965 unique IDs.
+# 1,106,041 observations after drop and 8,965 unique IDs. A similar process to that used for the August data is employed here. 
+# Data from the 9th is incomplete and so sorting by number of meter reads in an hour is inadequate on its own.
 july_sub <- july_sub %>% 
     group_by(custID, day) %>%
     filter(length(hour) <= 24 & day != 9) %>%
@@ -128,15 +131,16 @@ data <- rbind(july_sub, aug_sub) #total of 1,905,822 observations and 8,671 uniq
 
 ### Data Exploration and Analysis
 
-## na count after dropping first consumption period
-# before dropping nas: 1,905,822 and 8,671 unique IDs.
+## na count after dropping first consumption period. 
+# before dropping nas: 1,905,822 and 8,671 unique IDs. NAs were clustered in a few 'problem' customers and so all customers #with missing usage data were dropped.
+
 na_count <-sapply(data, function(y) sum(length(which(is.na(y)))))
-print(na_count)
 data <- na.omit(data, "usage")
 # After dropping: 1,901,349 observations and 8,613 unique IDs.
 # Keeping custIDs with negative readings, but dropping those observations.
 
-negative <- subset(data, usage < 0) #1,085 observations across 379 observations
+# Currently analyzing the 1085 negative observations of energy usage. From conversations outside of this code, the meter #reading are aberrant and should likely be dropped. Interpolation might be used, but this data will likely be dropped. 
+negative <- subset(data, usage < 0) #1,085 observations across 379 IDs
 positive <- subset(data, usage >= 0) #1,900,264 observations
 
     
@@ -153,6 +157,7 @@ july_event <- subset(positive, day == "13" & month == "7")
 
 
 ## create usage graph data
+## As mentioned earlier, the data being analyzed is part of a randomized control trial. This graph is part of an analysis to ##make sure that the data fits the form of an RCT. In the graph, control and treatment groups are identical until the event ##period where the usage values diverage as intuition would expect (treatment group has lower usage than the spike from the ##control group).
 
 summary <- spread(aggregate(usage ~ Treatment + hour, aug_event, FUN = "mean"), Treatment, usage)
 colnames(summary) <- c("Hours", "Control", "Treatment")
@@ -165,6 +170,7 @@ ggplot(summary, mapping = aes(Hours, y = Consumption, color = Variables)) +
 
 
 ```{r}
+##Basic analysis of demographic data to inform model construction and reporting.
 ## Climate Zones
 clim.obs <- ddply(data, ~Climate, summarise, distinct_czones=length(unique(custID)))
 
@@ -180,20 +186,5 @@ tenant.obs <- ddply(data, ~NewTenant, summarise, distinct_tenant=length(unique(c
 zip.obs <- ddply(data, ~Zip, summarise, distinct_zip=length(unique(custID)))
 zip.obs <- zip.obs[order(zip.obs$distinct_zip, decreasing =TRUE),]
 
-## consumption graph
 
-aug_event <- subset(data, day == "16" & month == "8")
-july_event <- subset(data, day == "13" & month == "7")
-
-## drop NA for graph
-aug_event <- na.omit(aug_event, "usage")
-july_event <- na.omit(july_event, "usage")
-
-## create usage graph data
-
-#summary <- spread(aggregate(usage ~ Treatment + hour, aug_event, FUN = "mean"), Treatment, usage)
-#colnames(summary) <- c("Hours", "Control", "Treatment")
-#ggplot(summary, mapping = aes(Hours, y = Consumption, color = Variables)) + 
-  #geom_line(aes(y = Control, col = "Control")) + 
-  #geom_line(aes(y = Treatment, col = "Treatment"))
 ``` 
