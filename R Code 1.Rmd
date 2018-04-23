@@ -2,7 +2,7 @@
 author: "Michael Campbell"
 output: html_document
 ---
-## This is part of the code for my Master's Research Project into the efficacy of an Air Conditioner Cycling program. The data ##used is a combination of high-level demographic data (geographic region type, urban-rural, etc.) and individual data from ##automatic readings of electricity meters. The program data takes the form of a randomized control trial and so is split into ##two groups: treatment and control. The code here is before the actual modelling stage. I have several models built that ##explore the efficacy of the AC cycling, but they have not been added here yet.
+## This is part of the code for my Master's Research Project into the efficacy of an Air Conditioner Cycling program. The data used is a combination of high-level demographic data (geographic region type, urban-rural, etc.) and individual data from automatic readings of electricity meters. The program data takes the form of a randomized control trial and so is split into two groups: treatment and control. The code here is before the actual modelling stage. I have several models built that explore the efficacy of the AC cycling, but they have not been added here yet.
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(MASS)
@@ -30,13 +30,12 @@ August_control <- fread("aug_16_event_CONTROL_negFixed.csv", data.table = FALSE)
 July_control <- fread("july_13_event_CONTROL_negFixed.csv", data.table = FALSE)
 Customer_Data <- fread("Customer Data.csv", data.table = FALSE)
 
-```
 
 The number of unique observations in August treatment is ` r length(unique(August_treat$custID))`. (4519)
 The number of unique observations in Augst control is ` r length(unique(August_control$custID))`. (4448)
 The number of unique observations in July treatment is ` r length(unique(July_treatment$custID))`. (4519)
 The number of unique observations in July control is ` r length(unique(July_control$custID))`. (4448)
-```{r}
+
 Treat_Merge <- rbind(August_treat, July_treat)
 Control_Merge <- rbind(August_control, July_control)
 
